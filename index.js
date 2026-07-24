@@ -24,7 +24,7 @@ const client = new Client({
 const TARGET_VOICE_CHANNEL_NAME = '⚡┃قصر الحاكم';
 
 // خريطة لتخزين قائمة التشغيل (الطابور) لكل سيرفر
-// كل عنصر: { guildId: { queue: [{ title, url }], player: AudioPlayer, connection, playing: bool } }
+// كل عنصر: { guildId: { queue: [{ title, url, artist, duration, thumbnail }], player: AudioPlayer, connection, playing: bool } }
 const guildQueues = new Map();
 
 function getGuildQueue(guildId) {
@@ -37,6 +37,94 @@ function getGuildQueue(guildId) {
         });
     }
     return guildQueues.get(guildId);
+}
+
+/**
+ * Resolve a query (URL or search term) to get YouTube URL and track info
+ * Supports: YouTube URLs, Spotify URLs, and search queries
+ */
+async function resolveTrackInfo(query) {
+    try {
+        const trimmedQuery = query.trim();
+
+        // Check if it's a YouTube URL
+        if (play.yt_validate(trimmedQuery) === 'video') {
+            const info = await play.video_info(trimmedQuery);
+            return {
+                url: trimmedQuery,
+                title: info.video_details.title,
+                artist: info.video_details.channel.name,
+                duration: info.video_details.durationInSec ? formatDuration(info.video_details.durationInSec) : 'Unknown',
+                thumbnail: info.video_details.thumbnails?.length > 0 ? info.video_details.thumbnails[0].url : null
+            };
+        }
+
+        // Check if it's a Spotify URL
+        if (trimmedQuery.includes('spotify.com')) {
+            const spotifyInfo = await play.spotify(trimmedQuery);
+            
+            if (spotifyInfo?.type === 'track') {
+                // Search YouTube for the Spotify track
+                const searchQuery = `${spotifyInfo.name} ${spotifyInfo.artists?.map(a => a.name).join(' ')}`;
+                const results = await play.search(searchQuery, { limit: 1 });
+                
+                if (results && results.length > 0) {
+                    return {
+                        url: results[0].url,
+                        title: spotifyInfo.name,
+                        artist: spotifyInfo.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+                        duration: spotifyInfo.durationMs ? formatDuration(Math.floor(spotifyInfo.durationMs / 1000)) : 'Unknown',
+                        thumbnail: spotifyInfo.thumbnail?.url || null
+                    };
+                }
+            } else if (spotifyInfo?.type === 'playlist') {
+                // For playlists, return info about the playlist
+                return {
+                    url: null,
+                    title: spotifyInfo.name,
+                    artist: spotifyInfo.owner?.display_name || 'Spotify Playlist',
+                    duration: `${spotifyInfo.tracks?.length || 0} tracks`,
+                    thumbnail: spotifyInfo.thumbnail?.url || null,
+                    isPlaylist: true,
+                    tracks: spotifyInfo.tracks
+                };
+            }
+        }
+
+        // Default: treat as search query
+        const results = await play.search(trimmedQuery, { limit: 1 });
+        
+        if (!results || results.length === 0) {
+            return null;
+        }
+
+        const video = results[0];
+        return {
+            url: video.url,
+            title: video.title,
+            artist: video.channel?.name || 'Unknown Artist',
+            duration: video.durationInSec ? formatDuration(video.durationInSec) : 'Unknown',
+            thumbnail: video.thumbnails?.length > 0 ? video.thumbnails[0].url : null
+        };
+    } catch (error) {
+        console.error('❌ خطأ في استخراج معلومات المقطع:', error);
+        return null;
+    }
+}
+
+/**
+ * Format seconds to MM:SS or HH:MM:SS
+ */
+function formatDuration(seconds) {
+    if (!seconds || isNaN(seconds)) return 'Unknown';
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 
 async function playNext(guild) {
@@ -104,35 +192,63 @@ async function playCommand(message, query) {
 
     setupPlayerListeners(guild);
 
-    let url = query.trim();
-    let title = url;
+    const loadingMsg = await message.reply('🔍 جارٍ البحث والتحضير...');
 
     try {
-        if (play.yt_validate(url) !== 'video' && !url.startsWith('http')) {
-            const results = await play.search(url, { limit: 1 });
-            if (!results || results.length === 0) {
-                message.reply('❌ لم يتم العثور على نتائج لهذا البحث.');
-                return;
+        const trackInfo = await resolveTrackInfo(query);
+
+        if (!trackInfo) {
+            await loadingMsg.edit('❌ لم يتم العثور على نتائج لهذا البحث.');
+            return;
+        }
+
+        // Handle Spotify playlists
+        if (trackInfo.isPlaylist && trackInfo.tracks) {
+            let addedCount = 0;
+            for (const spotifyTrack of trackInfo.tracks.slice(0, 50)) {
+                // Limit to first 50 tracks
+                const searchQuery = `${spotifyTrack.name} ${spotifyTrack.artists?.map(a => a.name).join(' ')}`;
+                const results = await play.search(searchQuery, { limit: 1 });
+
+                if (results && results.length > 0) {
+                    guildData.queue.push({
+                        title: spotifyTrack.name,
+                        url: results[0].url,
+                        artist: spotifyTrack.artists?.map(a => a.name).join(', ') || 'Unknown',
+                        duration: spotifyTrack.durationMs ? formatDuration(Math.floor(spotifyTrack.durationMs / 1000)) : 'Unknown',
+                        thumbnail: spotifyTrack.thumbnail?.url || null
+                    });
+                    addedCount++;
+                }
             }
-            url = results[0].url;
-            title = results[0].title;
-        } else if (play.yt_validate(url) === 'video') {
-            const info = await play.video_info(url);
-            title = info.video_details.title;
+
+            if (!guildData.playing) {
+                await playNext(guild);
+                await loadingMsg.edit(
+                    `📋 تمت إضافة **${trackInfo.title}** (${addedCount} أغنية)\n🎵 جارٍ تشغيل الأولى...`
+                );
+            } else {
+                await loadingMsg.edit(`📋 تمت إضافة ${addedCount} أغنية من **${trackInfo.title}** إلى قائمة الانتظار.`);
+            }
+            return;
+        }
+
+        // Handle single tracks
+        guildData.queue.push(trackInfo);
+
+        if (!guildData.playing) {
+            await playNext(guild);
+            await loadingMsg.edit(
+                `🎵 جارٍ التشغيل: **${trackInfo.title}**\n👤 الفنان: ${trackInfo.artist}\n⏱️ المدة: ${trackInfo.duration}`
+            );
+        } else {
+            await loadingMsg.edit(
+                `➕ تمت الإضافة: **${trackInfo.title}**\n👤 الفنان: ${trackInfo.artist}\n⏱️ المدة: ${trackInfo.duration}`
+            );
         }
     } catch (error) {
-        console.error('❌ خطأ أثناء البحث عن المقطع:', error);
-        message.reply('❌ حدث خطأ أثناء البحث عن المقطع. تأكد من صحة الرابط أو اسم الأغنية.');
-        return;
-    }
-
-    guildData.queue.push({ title, url });
-
-    if (!guildData.playing) {
-        await playNext(guild);
-        message.reply(`🎶 جارٍ تشغيل: **${title}**`);
-    } else {
-        message.reply(`➕ تمت إضافة **${title}** إلى قائمة الانتظار.`);
+        console.error('❌ خطأ في أمر التشغيل:', error);
+        await loadingMsg.edit('❌ حدث خطأ أثناء البحث عن المقطع. تأكد من صحة الرابط أو اسم الأغنية.');
     }
 }
 
@@ -172,7 +288,8 @@ function skipCommand(message) {
         return;
     }
 
-    message.reply('⏭️ تم تخطي المقطع الحالي.');
+    const skipped = guildData.queue[0];
+    message.reply(`⏭️ تم تخطي: **${skipped.title}**`);
     guildData.player.stop();
 }
 
@@ -200,10 +317,13 @@ function showQueueCommand(message) {
     }
 
     const list = guildData.queue
-        .map((track, index) => `${index === 0 ? '▶️' : `${index}.`} ${track.title}`)
+        .map((track, index) => {
+            const marker = index === 0 ? '▶️ **الآن**' : `**${index}.**`;
+            return `${marker} ${track.title}\n   👤 ${track.artist} | ⏱️ ${track.duration}`;
+        })
         .join('\n');
 
-    message.reply(`🎵 **قائمة الانتظار الحالية:**\n${list}`);
+    message.reply(`🎵 **قائمة الانتظار (${guildData.queue.length} أغنية):**\n${list}`);
 }
 
 function joinSpecificVoiceChannel(guild) {
