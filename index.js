@@ -27,6 +27,41 @@ const TARGET_VOICE_CHANNEL_NAME = '⚡┃قصر الحاكم';
 // كل عنصر: { guildId: { queue: [{ title, url, artist, duration, thumbnail }], player: AudioPlayer, connection, playing: bool } }
 const guildQueues = new Map();
 
+/**
+ * Initialize Spotify authentication using environment variables
+ */
+async function initSpotify() {
+    const spotifyClientId = process.env.SPOTIFY_CLIENT_ID;
+    const spotifyClientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+    const spotifyRefreshToken = process.env.SPOTIFY_REFRESH_TOKEN;
+
+    if (spotifyClientId && spotifyClientSecret && spotifyRefreshToken) {
+        try {
+            play.setToken({
+                spotify: {
+                    client_id: spotifyClientId,
+                    client_secret: spotifyClientSecret,
+                    refresh_token: spotifyRefreshToken,
+                    market: 'US' // Can be changed to user's market
+                }
+            });
+            console.log('✅ تم إعداد مصادقة Spotify بنجاح');
+            return true;
+        } catch (error) {
+            console.error('⚠️ خطأ في إعداد Spotify:', error.message);
+            console.log('💡 ستعمل الوظائف الأخرى بشكل طبيعي بدون مصادقة Spotify');
+            return false;
+        }
+    } else {
+        console.log('⚠️ لم يتم توفير بيانات اعتماد Spotify. الميزات الاختيارية قد تكون محدودة.');
+        console.log('💡 لتفعيل مصادقة Spotify، أضف هذه المتغيرات:');
+        console.log('   - SPOTIFY_CLIENT_ID');
+        console.log('   - SPOTIFY_CLIENT_SECRET');
+        console.log('   - SPOTIFY_REFRESH_TOKEN');
+        return false;
+    }
+}
+
 function getGuildQueue(guildId) {
     if (!guildQueues.has(guildId)) {
         guildQueues.set(guildId, {
@@ -366,8 +401,11 @@ function joinSpecificVoiceChannel(guild) {
     return connection;
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`✅ البوت شغال بنجاح باسم: ${client.user.tag}`);
+
+    // Initialize Spotify authentication
+    await initSpotify();
 
     client.guilds.cache.forEach((guild) => {
         const connection = joinSpecificVoiceChannel(guild);
