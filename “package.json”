@@ -1,0 +1,11 @@
+{
+  "name": "discord-bot",
+  "version": "1.0.0",
+  "main": "index",
+  "scripts": {
+    "start": "node index"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  }
+}
