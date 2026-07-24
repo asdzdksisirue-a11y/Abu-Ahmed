@@ -58,7 +58,8 @@ async function playNext(guild) {
     try {
         const streamInfo = await play.stream(track.url);
         const resource = createAudioResource(streamInfo.stream, {
-            inputType: streamInfo.type || StreamType.Arbitrary
+            inputType: StreamType.Opus,
+            inlineVolume: true
         });
 
         connection.subscribe(guildData.player);
@@ -281,3 +282,4 @@ client.on('messageCreate', async (message) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
