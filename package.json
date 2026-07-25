@@ -6,8 +6,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@discordjs/voice": "latest",
-    "discord.js": "latest",
-    "play-dl": "latest"
+    "discord.js": "^14.14.0",
+    "@discordjs/voice": "^0.16.0",
+    "play-dl": "^1.9.7"
   }
 }
