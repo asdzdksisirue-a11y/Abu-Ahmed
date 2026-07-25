@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const play = require('play-dl');
+const yts = require('yt-search');
+const ytdl = require('@distube/ytdl-core');
 
 const client = new Client({
     intents: [
@@ -18,10 +19,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية من سبوتيفاي بالاسم أو الرابط')
+        .setDescription('تشغيل أغنية بالاسم أو الرابط')
         .addStringOption(option =>
             option.setName('اسم')
-                .setDescription('اكتب اسم الأغنية أو رابط سبوتيفاي')
+                .setDescription('اكتب اسم الأغنية أو الرابط')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -79,45 +80,58 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'شغل') {
         const query = interaction.options.getString('اسم');
-        await interaction.deferReply();
+        
+        // منع انهيار الرد لو أخذ وقتاً طويلاً
         try {
-            let trackInfo = query;
-            
-            // إذا كان رابط سبوتيفاي
-            if (query.includes('spotify.com')) {
-                const spotifyData = await play.spotify(query);
-                const searchResults = await play.search(`${spotifyData.name} ${spotifyData.artists[0].name}`, { limit: 1 });
-                if (!searchResults || searchResults.length === 0) {
-                    return interaction.editReply('ما قدرت ألقى الأغنية من سبوتيفاي.');
+            await interaction.deferReply();
+        } catch (e) {
+            console.error('Defer error:', e);
+            return;
+        }
+
+        try {
+            let videoUrl = query;
+
+            // البحث إذا لم يكن رابطاً مباشراً
+            if (!query.includes('http://') && !query.includes('https://')) {
+                const searchResult = await yts(query);
+                if (!searchResult || !searchResult.videos || searchResult.videos.length === 0) {
+                    return interaction.editReply('❌ ما حصلت شي بهذا الاسم، جرب اسم ثاني.');
                 }
-                trackInfo = searchResults[0].url;
-            } else {
-                // بحث عادي بالاسم ويجيبها
-                const searchResults = await play.search(query, { limit: 1 });
-                if (!searchResults || searchResults.length === 0) {
-                    return interaction.editReply('ما حصلت شي بهذا الاسم!');
-                }
-                trackInfo = searchResults[0].url;
+                videoUrl = searchResult.videos[0].url;
             }
 
-            const streamData = await play.stream(trackInfo);
-            const resource = createAudioResource(streamData.stream, { inputType: streamData.type });
+            const stream = ytdl(videoUrl, { filter: 'audioonly', highWaterMark: 1 << 25 });
+            const resource = createAudioResource(stream);
             player.play(resource);
             
-            await interaction.editReply(`🎶 شغال الحين من سبوتيفاي: **${query}**`);
+            await interaction.editReply(`🎶 شغال الحين: **${query}**`);
         } catch (error) {
-            console.error(error);
-            await interaction.editReply('صار فيه مشكلة أثناء التشغيل، جرب اسم ثاني.');
+            console.error('خطأ أثناء تشغيل الصوت:', error);
+            // معالجة الخطأ بأمان وإبلاغ المستخدم بدون ما يطفى البوت
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply('⚠️ صار فيه خطأ تقني أو تعذر جلب المقطع، حاول مرة ثانية.');
+                }
+            } catch (innerError) {
+                console.error('فشل إرسال رسالة الخطأ:', innerError);
+            }
         }
     } else if (commandName === 'وقف') {
-        player.pause();
-        await interaction.reply({ content: '⏸️ تم الإيقاف المؤقت', ephemeral: true });
+        try {
+            player.pause();
+            await interaction.reply({ content: '⏸️ تم الإيقاف المؤقت', ephemeral: true });
+        } catch (e) { console.error(e); }
     } else if (commandName === 'كمل') {
-        player.unpause();
-        await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
+        try {
+            player.unpause();
+            await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
+        } catch (e) { console.error(e); }
     } else if (commandName === 'إيقاف') {
-        player.stop();
-        await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً', ephemeral: true });
+        try {
+            player.stop();
+            await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً', ephemeral: true });
+        } catch (e) { console.error(e); }
     }
 });
 
