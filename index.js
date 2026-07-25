@@ -1,10 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const {
-    joinVoiceChannel,
-    VoiceConnectionStatus,
-    entersState,
-    createAudioPlayer,
-} = require('@discordjs/voice');
+const { DisTube } = require('distube');
+const { YtDlpPlugin } = require('@distube/yt-dlp');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 
 const client = new Client({
     intents: [
@@ -15,19 +12,40 @@ const client = new Client({
     ]
 });
 
-const player = createAudioPlayer();
+// إعداد DisTube للبحث والتشغيل من يوتيوب
+const distube = new DisTube(client, {
+    emitNewSongOnly: true,
+    emitAddSongWhenCreatingQueue: false,
+    plugins: [new YtDlpPlugin()]
+});
 
 // آيدي الروم الصوتي حقك اللي يثبت فيه البوت
 const VOICE_CHANNEL_ID = '1529174493753508062';
 
-// إعداد أمر السلاش
+// تجهيز أوامر السلاش (تشغيل، إيقاف، استئناف، إنهاء، مستوى الصوت)
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل مقطع أو أغنية عبر البوت')
+        .setDescription('تشغيل أغنية بالاسم أو الرابط')
         .addStringOption(option =>
             option.setName('البحث')
-                .setDescription('اسم الأغنية أو الرابط')
+                .setDescription('اكتب اسم الأغنية أو الرابط')
+                .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('وقف')
+        .setDescription('إيقاف مؤقت للأغنية'),
+    new SlashCommandBuilder()
+        .setName('كمل')
+        .setDescription('استئناف تشغيل الأغنية'),
+    new SlashCommandBuilder()
+        .setName('إيقاف')
+        .setDescription('إيقاف الأغنية نهائياً وإخراج البوت أو مسح القائمة'),
+    new SlashCommandBuilder()
+        .setName('صوت')
+        .setDescription('تغيير مستوى صوت البوت')
+        .addIntegerOption(option =>
+            option.setName('القيمة')
+                .setDescription('اختر مستوى الصوت من 1 إلى 100')
                 .setRequired(true))
 ].map(command => command.toJSON());
 
@@ -59,7 +77,6 @@ client.on('ready', async () => {
                 });
 
                 await entersState(connection, VoiceConnectionStatus.Ready, 20 * 1000);
-                connection.subscribe(player);
                 console.log(`تم دخول البوت إلى الروم الصوتي بنجاح!`);
             }
         }
@@ -68,32 +85,82 @@ client.on('ready', async () => {
     }
 });
 
-// التفاعل مع أمر السلاش (/)
+// التفاعل مع أوامر السلاش (/)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === 'شغل') {
-        const query = interaction.options.getString('البحث');
+    const { commandName } = interaction;
+    const voiceChannel = interaction.member?.voice.channel || interaction.guild?.channels.cache.get(VOICE_CHANNEL_ID);
 
-        const channel = interaction.member?.voice.channel || interaction.guild?.channels.cache.get(VOICE_CHANNEL_ID);
-        if (!channel) {
+    if (commandName === 'شغل') {
+        const query = interaction.options.getString('البحث');
+        if (!voiceChannel) {
             return interaction.reply({ content: 'يا ليت تدخل روم صوتي أول!', ephemeral: true });
         }
 
         try {
-            const connection = joinVoiceChannel({
-                channelId: channel.id,
-                guildId: interaction.guild.id,
-                adapterCreator: interaction.guild.voiceAdapterCreator,
+            await interaction.reply(`🔍 جاري البحث والتشغيل: **${query}**`);
+            await distube.play(voiceChannel, query, {
+                textChannel: interaction.channel,
+                member: interaction.member,
             });
-
-            await entersState(connection, VoiceConnectionStatus.Ready, 20 * 1000);
-            connection.subscribe(player);
-            
-            await interaction.reply(`ابشر يا مجيد، جاري تشغيل الطلب: **${query}**`);
         } catch (error) {
             console.error(error);
-            await interaction.reply({ content: 'فشلت محاولة الاتصال بالصوت، تأكد من الأذونات.', ephemeral: true });
+            await interaction.editReply('صار فيه مشكلة في تشغيل الأغنية، تأكد من الاسم.');
+        }
+    } 
+    
+    else if (commandName === 'وقف') {
+        try {
+            const queue = distube.getQueue(interaction.guild.id);
+            if (!queue) return interaction.reply({ content: 'ما فيه شي شغال حالياً!', ephemeral: true });
+            queue.pause();
+            await interaction.reply('⏸️ تم إيقاف الأغنية مؤقتاً.');
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ content: 'حدث خطأ أثناء إيقاف الأغنية.', ephemeral: true });
+        }
+    } 
+    
+    else if (commandName === 'كمل') {
+        try {
+            const queue = distube.getQueue(interaction.guild.id);
+            if (!queue) return interaction.reply({ content: 'ما فيه شي متوقف حالياً!', ephemeral: true });
+            queue.resume();
+            await interaction.reply('▶️ تم استئناف تشغيل الأغنية.');
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ content: 'حدث خطأ أثناء استئناف الأغنية.', ephemeral: true });
+        }
+    } 
+    
+    else if (commandName === 'إيقاف') {
+        try {
+            const queue = distube.getQueue(interaction.guild.id);
+            if (!queue) return interaction.reply({ content: 'ما فيه شي شغال أساساً!', ephemeral: true });
+            queue.stop();
+            await interaction.reply('⏹️ تم إيقاف الصوت.');
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ content: 'حدث خطأ أثناء الإيقاف.', ephemeral: true });
+        }
+    } 
+    
+    else if (commandName === 'صوت') {
+        const volume = interaction.options.getInteger('القيمة');
+        try {
+            const queue = distube.getQueue(interaction.guild.id);
+            if (!queue) return interaction.reply({ content: 'البوت مو قاعد يشغل شي حالياً عشان تغير صوته!', ephemeral: true });
+            
+            if (volume < 0 || volume > 100) {
+                return interaction.reply({ content: 'اختر قيمة الصوت بين 1 و 100 فقط!', ephemeral: true });
+            }
+
+            queue.setVolume(volume);
+            await interaction.reply(`🔊 تم ضبط مستوى الصوت على: **${volume}%**`);
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ content: 'حدث خطأ أثناء تغيير مستوى الصوت.', ephemeral: true });
         }
     }
 });
