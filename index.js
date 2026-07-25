@@ -4,8 +4,6 @@ const {
     VoiceConnectionStatus,
     entersState,
     createAudioPlayer,
-    createAudioResource,
-    AudioPlayerStatus,
 } = require('@discordjs/voice');
 
 const client = new Client({
@@ -22,8 +20,31 @@ const player = createAudioPlayer();
 // آيدي الروم الصوتي حقك اللي يثبت فيه البوت
 const VOICE_CHANNEL_ID = '1529174493753508062';
 
+// إعداد أمر السلاش
+const commands = [
+    new SlashCommandBuilder()
+        .setName('شغل')
+        .setDescription('تشغيل مقطع أو أغنية عبر البوت')
+        .addStringOption(option =>
+            option.setName('البحث')
+                .setDescription('اسم الأغنية أو الرابط')
+                .setRequired(true))
+].map(command => command.toJSON());
+
 client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
+
+    // تسجيل أوامر السلاش في ديسكورد تلقائياً
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+        console.log('تم تسجيل أوامر السلاش بنجاح!');
+    } catch (error) {
+        console.error(error);
+    }
 
     // دخول البوت تلقائياً للروم الصوتي أول ما يشتغل
     try {
@@ -47,33 +68,32 @@ client.on('ready', async () => {
     }
 });
 
-// نظام الأوامر (مثل أمر التشغيل والأغاني)
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
+// التفاعل مع أمر السلاش (/)
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
 
-    if (message.content.startsWith('شغل')) {
-        const args = message.content.split(' ');
-        const query = args.slice(1).join(' ');
+    if (interaction.commandName === 'شغل') {
+        const query = interaction.options.getString('البحث');
 
-        const channel = message.member?.voice.channel || client.guilds.cache.first()?.channels.cache.get(VOICE_CHANNEL_ID);
+        const channel = interaction.member?.voice.channel || interaction.guild?.channels.cache.get(VOICE_CHANNEL_ID);
         if (!channel) {
-            return message.reply('يا ليت تدخل روم صوتي أو تتأكد من روم البوت!');
+            return interaction.reply({ content: 'يا ليت تدخل روم صوتي أول!', ephemeral: true });
         }
 
         try {
             const connection = joinVoiceChannel({
                 channelId: channel.id,
-                guildId: channel.guild.id,
-                adapterCreator: channel.guild.voiceAdapterCreator,
+                guildId: interaction.guild.id,
+                adapterCreator: interaction.guild.voiceAdapterCreator,
             });
 
             await entersState(connection, VoiceConnectionStatus.Ready, 20 * 1000);
             connection.subscribe(player);
             
-            message.reply(`ابشر يا مجيد، جاري تشغيل الطلب: ${query || 'بدون عنوان'}`);
+            await interaction.reply(`ابشر يا مجيد، جاري تشغيل الطلب: **${query}**`);
         } catch (error) {
             console.error(error);
-            message.reply('صار فيه مشكلة في تشغيل الصوت، تأكد من الرابط أو الأذونات.');
+            await interaction.reply({ content: 'فشلت محاولة الاتصال بالصوت، تأكد من الأذونات.', ephemeral: true });
         }
     }
 });
