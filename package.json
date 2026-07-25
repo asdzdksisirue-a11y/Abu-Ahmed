@@ -1,6 +1,15 @@
-"dependencies": {
-  "@distube/ytdl-core": "^1.5.1",
-  "discord.js": "^14.x.x",
-  "@discordjs/voice": "^0.16.x",
-  "yt-search": "^2.11.0"
+{
+  "name": "discord-music-bot",
+  "version": "1.0.0",
+  "description": "Discord music bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^1.5.1",
+    "@discordjs/voice": "^0.16.18",
+    "discord.js": "^14.14.1",
+    "yt-search": "^2.11.0"
+  }
 }
