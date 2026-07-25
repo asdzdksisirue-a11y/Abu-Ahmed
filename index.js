@@ -18,10 +18,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية بالاسم أو الرابط')
+        .setDescription('تشغيل أغنية برابط يوتيوب أو اسم')
         .addStringOption(option =>
-            option.setName('اسم')
-                .setDescription('اكتب اسم الأغنية أو رابط يوتيوب')
+            option.setName('رابط')
+                .setDescription('اكتب رابط يوتيوب أو اسم الأغنية')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -49,8 +49,6 @@ async function connectToVoiceChannel(guild) {
                 setTimeout(() => connectToVoiceChannel(guild), 2000);
             }
         });
-
-        console.log('تم تثبيت البوت في الروم الصوتي بنجاح!');
     } catch (error) {
         console.error('فشل الاتصال بالروم:', error);
     }
@@ -80,35 +78,36 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (commandName === 'شغل') {
-        const query = interaction.options.getString('اسم');
-        await interaction.reply(`🔍 جاري التشغيل: **${query}**`);
+        const query = interaction.options.getString('رابط');
+        await interaction.deferReply();
         try {
-            let videoUrl = query;
+            let targetUrl = query;
             if (!query.startsWith('http')) {
                 const searchResults = await play.search(query, { limit: 1 });
                 if (!searchResults || searchResults.length === 0) {
-                    return interaction.editReply('ما حصلت شي بهذا الاسم!');
+                    return interaction.editReply('ما قدرت ألقى شي بهذا الاسم، جرب حط رابط يوتيوب مباشر.');
                 }
-                videoUrl = searchResults[0].url;
+                targetUrl = searchResults[0].url;
             }
 
-            const stream = await play.stream(videoUrl);
-            const resource = createAudioResource(stream.stream, { inputType: stream.type });
+            const streamData = await play.stream(targetUrl);
+            const resource = createAudioResource(streamData.stream, { inputType: streamData.type });
             player.play(resource);
-            await interaction.editReply(`🎶 شغال الحين: **${query}**`);
+            
+            await interaction.editReply(`🎶 شغال الحين في الروم`);
         } catch (error) {
             console.error(error);
-            await interaction.editReply('صار فيه مشكلة أثناء التشغيل. تأكد من الرابط أو جرب رابط يوتيوب مباشر.');
+            await interaction.editReply('صار فيه مشكلة من يوتيوب، جرب رابط مقطع ثاني مختلف.');
         }
     } else if (commandName === 'وقف') {
         player.pause();
-        await interaction.reply({ content: '⏸️ مؤقت', ephemeral: true });
+        await interaction.reply({ content: '⏸️ تم الإيقاف المؤقت', ephemeral: true });
     } else if (commandName === 'كمل') {
         player.unpause();
-        await interaction.reply({ content: '▶️ كملنا', ephemeral: true });
+        await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
     } else if (commandName === 'إيقاف') {
         player.stop();
-        await interaction.reply({ content: '⏹️ وقفت الصوت', ephemeral: true });
+        await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً', ephemeral: true });
     }
 });
 
