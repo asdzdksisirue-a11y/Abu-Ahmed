@@ -6,9 +6,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@distube/ytdl-core": "latest",
     "@discordjs/voice": "latest",
     "discord.js": "latest",
-    "yt-search": "latest"
+    "play-dl": "latest"
   }
 }
