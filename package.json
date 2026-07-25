@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@distube/ytdl-core": "^1.5.1",
-    "@discordjs/voice": "^0.16.18",
-    "discord.js": "^14.14.1",
+    "@discordjs/voice": "^0.16.0",
+    "discord.js": "^14.14.0",
     "yt-search": "^2.11.0"
   }
 }
