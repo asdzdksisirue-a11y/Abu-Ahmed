@@ -18,10 +18,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية برابط يوتيوب أو اسم')
+        .setDescription('تشغيل أغنية من سبوتيفاي بالاسم أو الرابط')
         .addStringOption(option =>
-            option.setName('رابط')
-                .setDescription('اكتب رابط يوتيوب أو اسم الأغنية')
+            option.setName('اسم')
+                .setDescription('اكتب اسم الأغنية أو رابط سبوتيفاي')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -78,26 +78,36 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (commandName === 'شغل') {
-        const query = interaction.options.getString('رابط');
+        const query = interaction.options.getString('اسم');
         await interaction.deferReply();
         try {
-            let targetUrl = query;
-            if (!query.startsWith('http')) {
+            let trackInfo = query;
+            
+            // إذا كان رابط سبوتيفاي
+            if (query.includes('spotify.com')) {
+                const spotifyData = await play.spotify(query);
+                const searchResults = await play.search(`${spotifyData.name} ${spotifyData.artists[0].name}`, { limit: 1 });
+                if (!searchResults || searchResults.length === 0) {
+                    return interaction.editReply('ما قدرت ألقى الأغنية من سبوتيفاي.');
+                }
+                trackInfo = searchResults[0].url;
+            } else {
+                // بحث عادي بالاسم ويجيبها
                 const searchResults = await play.search(query, { limit: 1 });
                 if (!searchResults || searchResults.length === 0) {
-                    return interaction.editReply('ما قدرت ألقى شي بهذا الاسم، جرب حط رابط يوتيوب مباشر.');
+                    return interaction.editReply('ما حصلت شي بهذا الاسم!');
                 }
-                targetUrl = searchResults[0].url;
+                trackInfo = searchResults[0].url;
             }
 
-            const streamData = await play.stream(targetUrl);
+            const streamData = await play.stream(trackInfo);
             const resource = createAudioResource(streamData.stream, { inputType: streamData.type });
             player.play(resource);
             
-            await interaction.editReply(`🎶 شغال الحين في الروم`);
+            await interaction.editReply(`🎶 شغال الحين من سبوتيفاي: **${query}**`);
         } catch (error) {
             console.error(error);
-            await interaction.editReply('صار فيه مشكلة من يوتيوب، جرب رابط مقطع ثاني مختلف.');
+            await interaction.editReply('صار فيه مشكلة أثناء التشغيل، جرب اسم ثاني.');
         }
     } else if (commandName === 'وقف') {
         player.pause();
