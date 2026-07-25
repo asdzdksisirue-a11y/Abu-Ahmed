@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const yts = require('yt-search');
-const ytdl = require('@distube/ytdl-core');
+const play = require('play-dl');
 
 const client = new Client({
     intents: [
@@ -19,10 +18,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية بالاسم أو الرابط')
+        .setDescription('تشغيل أغنية من يوتيوب بالاسم أو الرابط')
         .addStringOption(option =>
             option.setName('اسم')
-                .setDescription('اكتب اسم الأغنية أو الرابط')
+                .setDescription('اكتب اسم الأغنية أو رابط يوتيوب')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -80,58 +79,38 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'شغل') {
         const query = interaction.options.getString('اسم');
+        await interaction.deferReply();
         
-        // منع انهيار الرد لو أخذ وقتاً طويلاً
-        try {
-            await interaction.deferReply();
-        } catch (e) {
-            console.error('Defer error:', e);
-            return;
-        }
-
         try {
             let videoUrl = query;
 
-            // البحث إذا لم يكن رابطاً مباشراً
+            // إذا لم يكن رابطاً، نبحث بيوتيوب بالطريقة السريعة
             if (!query.includes('http://') && !query.includes('https://')) {
-                const searchResult = await yts(query);
-                if (!searchResult || !searchResult.videos || searchResult.videos.length === 0) {
+                const searchResults = await play.search(query, { limit: 1 });
+                if (!searchResults || searchResults.length === 0) {
                     return interaction.editReply('❌ ما حصلت شي بهذا الاسم، جرب اسم ثاني.');
                 }
-                videoUrl = searchResult.videos[0].url;
+                videoUrl = searchResults[0].url;
             }
 
-            const stream = ytdl(videoUrl, { filter: 'audioonly', highWaterMark: 1 << 25 });
-            const resource = createAudioResource(stream);
+            const streamData = await play.stream(videoUrl);
+            const resource = createAudioResource(streamData.stream, { inputType: streamData.type });
             player.play(resource);
             
             await interaction.editReply(`🎶 شغال الحين: **${query}**`);
         } catch (error) {
-            console.error('خطأ أثناء تشغيل الصوت:', error);
-            // معالجة الخطأ بأمان وإبلاغ المستخدم بدون ما يطفى البوت
-            try {
-                if (interaction.deferred || interaction.replied) {
-                    await interaction.editReply('⚠️ صار فيه خطأ تقني أو تعذر جلب المقطع، حاول مرة ثانية.');
-                }
-            } catch (innerError) {
-                console.error('فشل إرسال رسالة الخطأ:', innerError);
-            }
+            console.error('خطأ التشغيل:', error);
+            await interaction.editReply('⚠️ صار فيه خطأ، تأكد أن الرابط أو الاسم صحيح وحاول مرة ثانية.');
         }
     } else if (commandName === 'وقف') {
-        try {
-            player.pause();
-            await interaction.reply({ content: '⏸️ تم الإيقاف المؤقت', ephemeral: true });
-        } catch (e) { console.error(e); }
+        player.pause();
+        await interaction.reply({ content: '⏸️ تم الإيقاف المؤقت', ephemeral: true });
     } else if (commandName === 'كمل') {
-        try {
-            player.unpause();
-            await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
-        } catch (e) { console.error(e); }
+        player.unpause();
+        await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
     } else if (commandName === 'إيقاف') {
-        try {
-            player.stop();
-            await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً', ephemeral: true });
-        } catch (e) { console.error(e); }
+        player.stop();
+        await interaction.reply({ content: '🪙 تم إيقاف الصوت نهائياً', ephemeral: true });
     }
 });
 
