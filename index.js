@@ -68,7 +68,8 @@ function getGuildQueue(guildId) {
             queue: [],
             player: createAudioPlayer(),
             connection: null,
-            playing: false
+            playing: false,
+            streamTimeout: null
         });
     }
     return guildQueues.get(guildId);
@@ -162,6 +163,14 @@ function formatDuration(seconds) {
     return `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 
+/**
+ * Check if connection is still active and valid
+ */
+function isConnectionValid(connection) {
+    if (!connection) return false;
+    return connection.state.status === VoiceConnectionStatus.Ready;
+}
+
 async function playNext(guild) {
     const guildData = getGuildQueue(guild.id);
 
@@ -171,27 +180,83 @@ async function playNext(guild) {
     }
 
     const connection = guildData.connection || getVoiceConnection(guild.id);
-    if (!connection) {
+    
+    // Validate connection before attempting playback
+    if (!isConnectionValid(connection)) {
+        console.warn(`⚠️ اتصال صوتي غير صالح في السيرفر: ${guild.name}`);
         guildData.playing = false;
+        guildData.queue.shift();
+        
+        // Retry after a short delay
+        setTimeout(() => playNext(guild), 1000);
         return;
     }
 
     const track = guildData.queue[0];
 
     try {
-        const streamInfo = await play.stream(track.url);
+        console.log(`🔄 جارٍ تحميل المقطع: ${track.title}`);
+        
+        // Get stream with timeout protection
+        const streamPromise = play.stream(track.url);
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Stream timeout after 30 seconds')), 30000)
+        );
+        
+        const streamInfo = await Promise.race([streamPromise, timeoutPromise]);
+        
+        // Verify connection is still valid before creating resource
+        if (!isConnectionValid(connection)) {
+            console.warn(`⚠️ انقطع الاتصال أثناء تحميل المقطع: ${track.title}`);
+            guildData.queue.shift();
+            await playNext(guild);
+            return;
+        }
+
         const resource = createAudioResource(streamInfo.stream, {
             inputType: StreamType.Opus,
-            inlineVolume: true
+            inlineVolume: true,
+            silencePaddingFrames: 5 // Add silence padding to prevent early disconnects
         });
 
+        // Subscribe and play only if connection is valid
         connection.subscribe(guildData.player);
         guildData.player.play(resource);
         guildData.playing = true;
+        
+        console.log(`✅ يشغل الآن: ${track.title}`);
+
+        // Clear any existing timeout
+        if (guildData.streamTimeout) {
+            clearTimeout(guildData.streamTimeout);
+        }
+
+        // Set timeout to detect stuck streams (30 seconds of no state change)
+        guildData.streamTimeout = setTimeout(() => {
+            if (guildData.playing && guildData.queue[0] === track) {
+                console.warn(`⚠️ المقطع عالق: ${track.title}. جارٍ التخطي...`);
+                guildData.queue.shift();
+                guildData.player.stop();
+            }
+        }, 30000);
+
     } catch (error) {
-        console.error(`❌ خطأ أثناء تشغيل المقطع: ${track.url}`, error);
+        console.error(`❌ خطأ أثناء تشغيل المقطع: ${track.url}`, error.message);
+        
+        // Clear timeout on error
+        if (guildData.streamTimeout) {
+            clearTimeout(guildData.streamTimeout);
+        }
+
         guildData.queue.shift();
-        playNext(guild);
+        
+        // Only retry if we have more tracks in queue
+        if (guildData.queue.length > 0) {
+            console.log(`⏭️ التخطي إلى المقطع التالي...`);
+            await playNext(guild);
+        } else {
+            guildData.playing = false;
+        }
     }
 }
 
@@ -204,7 +269,7 @@ async function playCommand(message, query) {
     const guild = message.guild;
     let connection = getVoiceConnection(guild.id);
 
-    if (!connection) {
+    if (!connection || !isConnectionValid(connection)) {
         const voiceChannel = guild.channels.cache.find(
             (channel) => channel.name === TARGET_VOICE_CHANNEL_NAME && channel.isVoiceBased()
         );
@@ -214,11 +279,21 @@ async function playCommand(message, query) {
             return;
         }
 
-        connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: guild.id,
-            adapterCreator: guild.voiceAdapterCreator
-        });
+        try {
+            connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
+                selfDeaf: true // Reduce bandwidth, bot doesn't need to hear
+            });
+
+            // Wait for connection to be ready
+            await entersState(connection, VoiceConnectionStatus.Ready, 30000);
+        } catch (error) {
+            console.error(`❌ فشل الاتصال بقناة صوتية في ${guild.name}:`, error.message);
+            message.reply('❌ فشلت محاولة الاتصال بقناة صوتية. تأكد من الأذونات.');
+            return;
+        }
     }
 
     const guildData = getGuildQueue(guild.id);
@@ -290,22 +365,37 @@ async function playCommand(message, query) {
 function setupPlayerListeners(guild) {
     const guildData = getGuildQueue(guild.id);
 
-    if (guildData.player.listenerCount(AudioPlayerStatus.Idle) > 0) {
-        return;
-    }
+    // Remove old listeners to prevent duplicates
+    guildData.player.removeAllListeners();
 
-    guildData.player.on(AudioPlayerStatus.Idle, () => {
+    guildData.player.on(AudioPlayerStatus.Idle, async () => {
+        console.log(`⏸️ المقطع انتهى. عدد المقاطع المتبقية: ${guildData.queue.length - 1}`);
+        
+        if (guildData.streamTimeout) {
+            clearTimeout(guildData.streamTimeout);
+        }
+
         guildData.queue.shift();
 
         if (guildData.queue.length > 0) {
-            playNext(guild);
+            await playNext(guild);
         } else {
             guildData.playing = false;
+            console.log(`✅ انتهت قائمة الانتظار في السيرفر: ${guild.name}`);
         }
     });
 
+    guildData.player.on(AudioPlayerStatus.Playing, () => {
+        console.log(`🎵 يشغّل الآن: ${guildData.queue[0]?.title || 'Unknown'}`);
+    });
+
     guildData.player.on('error', (error) => {
-        console.error(`❌ خطأ في مشغل الصوت في السيرفر: ${guild.name}`, error);
+        console.error(`❌ خطأ في مشغل الصوت في السيرفر: ${guild.name}`, error.message);
+        
+        if (guildData.streamTimeout) {
+            clearTimeout(guildData.streamTimeout);
+        }
+
         guildData.queue.shift();
         if (guildData.queue.length > 0) {
             playNext(guild);
@@ -334,6 +424,10 @@ function stopCommand(message) {
     if (!guildData || (!guildData.playing && guildData.queue.length === 0)) {
         message.reply('⚠️ لا يوجد تشغيل حالياً لإيقافه.');
         return;
+    }
+
+    if (guildData.streamTimeout) {
+        clearTimeout(guildData.streamTimeout);
     }
 
     guildData.queue = [];
@@ -373,7 +467,8 @@ function joinSpecificVoiceChannel(guild) {
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: guild.id,
-        adapterCreator: guild.voiceAdapterCreator
+        adapterCreator: guild.voiceAdapterCreator,
+        selfDeaf: true
     });
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -395,7 +490,7 @@ function joinSpecificVoiceChannel(guild) {
     });
 
     connection.on('error', (error) => {
-        console.error(`❌ خطأ في الاتصال الصوتي في السيرفر: ${guild.name}`, error);
+        console.error(`❌ خطأ في الاتصال الصوتي في السيرفر: ${guild.name}`, error.message);
     });
 
     return connection;
