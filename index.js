@@ -18,10 +18,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية بالاسم')
+        .setDescription('تشغيل أغنية بالاسم أو الرابط')
         .addStringOption(option =>
             option.setName('اسم')
-                .setDescription('اكتب اسم الأغنية')
+                .setDescription('اكتب اسم الأغنية أو رابط يوتيوب')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -81,18 +81,24 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'شغل') {
         const query = interaction.options.getString('اسم');
-        await interaction.reply(`🔍 جاري البحث والتشغيل: **${query}**`);
+        await interaction.reply(`🔍 جاري التشغيل: **${query}**`);
         try {
-            const searchResults = await play.search(query, { limit: 1 });
-            if (!searchResults || searchResults.length === 0) {
-                return interaction.editReply('ما حصلت شي بهذا الاسم!');
+            let videoUrl = query;
+            if (!query.startsWith('http')) {
+                const searchResults = await play.search(query, { limit: 1 });
+                if (!searchResults || searchResults.length === 0) {
+                    return interaction.editReply('ما حصلت شي بهذا الاسم!');
+                }
+                videoUrl = searchResults[0].url;
             }
-            const stream = await play.stream(searchResults[0].url);
+
+            const stream = await play.stream(videoUrl);
             const resource = createAudioResource(stream.stream, { inputType: stream.type });
             player.play(resource);
+            await interaction.editReply(`🎶 شغال الحين: **${query}**`);
         } catch (error) {
             console.error(error);
-            await interaction.editReply('صار فيه مشكلة أثناء تشغيل الأغنية.');
+            await interaction.editReply('صار فيه مشكلة أثناء التشغيل. تأكد من الرابط أو جرب رابط يوتيوب مباشر.');
         }
     } else if (commandName === 'وقف') {
         player.pause();
