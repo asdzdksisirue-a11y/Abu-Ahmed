@@ -12,30 +12,53 @@ const client = new Client({
     ]
 });
 
-// تسجيل أمر الـ Slash Command
+// آي دي الروم الصوتي الثابت حقك
+const FIXED_VOICE_CHANNEL_ID = '1529174493753508062'; 
+
+// قراءة الملفات تلقائياً
+const files = fs.readdirSync(__dirname).filter(file => file.endsWith('.mp3') || file.endsWith('.wav') || file.includes('اخذ') || file.includes('جابك') || file.includes('نتغير'));
+const choices = (files.length > 0 ? files : ['index.js']).slice(0, 25).map(file => ({ name: file.substring(0, 100), value: file }));
+
 const commands = [
     new SlashCommandBuilder()
         .setName('play')
-        .setDescription('تشغيل أغنية من الملفات المرفوعة')
+        .setDescription('تشغيل الملفات المرفوعة في الروم الثابت')
         .addStringOption(option =>
             option.setName('song')
-                .setDescription('اسم الأغنية أو جزء منها')
-                .setRequired(true))
+                .setDescription('اختر الملف المطلوب')
+                .setRequired(true)
+                .addChoices(...choices)
+        )
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}! Bot is ready.`);
-
-    // تسجيل الأوامر في سيرفرك (تحديث فوري)
-    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    console.log(`Logged in as ${client.user.tag}!`);
+    
+    // أول ما يشتغل البوت، يدخل الروم الثابت تلقائياً
     try {
-        console.log('Started refreshing application (/) commands.');
-        // إذا تبيه عام لكل السيرفرات خذ Routes.applicationCommands(client.user.id)
+        const guild = client.guilds.cache.first();
+        if (guild) {
+            const channel = guild.channels.cache.get(FIXED_VOICE_CHANNEL_ID);
+            if (channel) {
+                joinVoiceChannel({
+                    channelId: channel.id,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                });
+                console.log(`دخل الروم الثابت بنجاح: ${channel.name}`);
+            }
+        }
+    } catch (e) {
+        console.log('ما قدر يدخل الروم تلقائياً:', e);
+    }
+
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commands },
         );
-        console.log('Successfully reloaded application (/) commands.');
+        console.log('Successfully registered application commands.');
     } catch (error) {
         console.error(error);
     }
@@ -45,35 +68,25 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'play') {
-        const voiceChannel = interaction.member?.voice.channel;
-        if (!voiceChannel) {
-            return interaction.reply({ content: '❌ يا طويل العمر لازم تدخل روم صوتي أول!', ephemeral: true });
-        }
-
         const songName = interaction.options.getString('song');
+        const guild = interaction.guild;
+        const channel = guild.channels.cache.get(FIXED_VOICE_CHANNEL_ID);
 
-        let targetPath = __dirname;
-        if (fs.existsSync(path.join(__dirname, 'audio audio'))) {
-            targetPath = path.join(__dirname, 'audio audio');
+        if (!channel) {
+            return interaction.reply({ content: 'ما قدرت ألقى الروم الثابت، تأكد من الآي دي!', ephemeral: true });
         }
 
-        const files = fs.readdirSync(targetPath);
-        const matchedFile = files.find(file => file.toLowerCase().includes(songName.toLowerCase()) && (file.endsWith('.mp3') || file.endsWith('.mp4')));
+        const filePath = path.join(__dirname, songName);
 
-        if (!matchedFile) {
-            const availableSongs = files.filter(f => f.endsWith('.mp3') || f.endsWith('.mp4')).map(f => `- ${f}`).join('\n');
-            return interaction.reply({ content: `❌ ما حصلت أغنية بهذا الاسم! الأغاني الموجودة عندك:\n${availableSongs}`, ephemeral: true });
+        if (!fs.existsSync(filePath)) {
+            return interaction.reply({ content: `ما لقيت الملف: **${songName}**`, ephemeral: true });
         }
-
-        const filePath = path.join(targetPath, matchedFile);
 
         try {
-            await interaction.deferReply();
-
             const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: voiceChannel.guild.id,
-                adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                channelId: channel.id,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
             });
 
             const player = createAudioPlayer();
@@ -82,19 +95,17 @@ client.on('interactionCreate', async interaction => {
             connection.subscribe(player);
             player.play(resource);
 
-            await interaction.editReply(`🎶 جاري تشغيل الآن: **${matchedFile}**`);
+            await interaction.reply(`ابشر يا مجيد، جاري تشغيل: **${songName}** في رومك الثابت 🎵`);
 
             player.on(AudioPlayerStatus.Idle, () => {
-                connection.destroy();
+                // البوت يبقى في الروم ولا يخرج منه
             });
 
         } catch (error) {
             console.error(error);
-            if (interaction.deferred) {
-                await interaction.editReply('❌ صار خطأ أثناء محاولة تشغيل الصوت.');
-            }
+            interaction.reply({ content: 'صار خطأ أثناء تشغيل الملف.', ephemeral: true });
         }
     }
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.DISCORD_TOKEN);
