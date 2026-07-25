@@ -18,10 +18,10 @@ let currentConnection = null;
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية من يوتيوب بالاسم أو الرابط')
+        .setDescription('تشغيل أغنية أو طرب بالاسم أو الرابط')
         .addStringOption(option =>
             option.setName('اسم')
-                .setDescription('اكتب اسم الأغنية أو رابط يوتيوب')
+                .setDescription('اكتب اسم الأغنية أو رابط يوتيوب / ساوند كلاود')
                 .setRequired(true)),
     new SlashCommandBuilder().setName('وقف').setDescription('إيقاف مؤقت'),
     new SlashCommandBuilder().setName('كمل').setDescription('استئناف التشغيل'),
@@ -40,15 +40,6 @@ async function connectToVoiceChannel(guild) {
         });
 
         currentConnection.subscribe(player);
-
-        currentConnection.on(VoiceConnectionStatus.Disconnected, async () => {
-            try {
-                await entersState(currentConnection, VoiceConnectionStatus.Ready, 5_000);
-            } catch (error) {
-                currentConnection.destroy();
-                setTimeout(() => connectToVoiceChannel(guild), 2000);
-            }
-        });
     } catch (error) {
         console.error('فشل الاتصال بالروم:', error);
     }
@@ -56,7 +47,6 @@ async function connectToVoiceChannel(guild) {
 
 client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -73,7 +63,7 @@ client.on('interactionCreate', async interaction => {
     const { commandName, guild } = interaction;
     if (!guild) return;
 
-    if (!currentConnection || currentConnection.state.status === VoiceConnectionStatus.Disconnected) {
+    if (!currentConnection) {
         await connectToVoiceChannel(guild);
     }
 
@@ -82,25 +72,30 @@ client.on('interactionCreate', async interaction => {
         await interaction.deferReply();
         
         try {
-            let videoUrl = query;
+            let targetUrl = query;
 
-            // إذا لم يكن رابطاً، نبحث بيوتيوب بالطريقة السريعة
-            if (!query.includes('http://') && !query.includes('https://')) {
+            if (!query.startsWith('http://') && !query.startsWith('https://')) {
                 const searchResults = await play.search(query, { limit: 1 });
                 if (!searchResults || searchResults.length === 0) {
                     return interaction.editReply('❌ ما حصلت شي بهذا الاسم، جرب اسم ثاني.');
                 }
-                videoUrl = searchResults[0].url;
+                targetUrl = searchResults[0].url;
             }
 
-            const streamData = await play.stream(videoUrl);
+            let streamData;
+            if (targetUrl.includes('soundcloud.com')) {
+                streamData = await play.stream_soundcloud(targetUrl);
+            } else {
+                streamData = await play.stream(targetUrl);
+            }
+
             const resource = createAudioResource(streamData.stream, { inputType: streamData.type });
             player.play(resource);
             
-            await interaction.editReply(`🎶 شغال الحين: **${query}**`);
+            await interaction.editReply(`🎶 سم طال عمرك، شغال الحين: **${query}**`);
         } catch (error) {
             console.error('خطأ التشغيل:', error);
-            await interaction.editReply('⚠️ صار فيه خطأ، تأكد أن الرابط أو الاسم صحيح وحاول مرة ثانية.');
+            await interaction.editReply('⚠️ عذراً، صار خطأ بجلب المقطع، جرب رابط مباشر أو اسم أوضح.');
         }
     } else if (commandName === 'وقف') {
         player.pause();
@@ -110,7 +105,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: '▶️ تم استئناف التشغيل', ephemeral: true });
     } else if (commandName === 'إيقاف') {
         player.stop();
-        await interaction.reply({ content: '🪙 تم إيقاف الصوت نهائياً', ephemeral: true });
+        await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً', ephemeral: true });
     }
 });
 
