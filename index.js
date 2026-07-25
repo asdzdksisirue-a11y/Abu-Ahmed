@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
-const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const play = require('play-dl');
 
 const client = new Client({
     intents: [
@@ -12,24 +11,19 @@ const client = new Client({
     ]
 });
 
-// إعداد DisTube للبحث والتشغيل من يوتيوب
-const distube = new DisTube(client, {
-    emitNewSongOnly: true,
-    emitAddSongWhenCreatingQueue: false,
-    plugins: [new YtDlpPlugin()]
-});
-
-// آيدي الروم الصوتي حقك اللي يثبت فيه البوت
+// آيدي الروم الصوتي المحدد اللي يثبت فيه البوت
 const VOICE_CHANNEL_ID = '1529174493753508062';
+const player = createAudioPlayer();
+let currentConnection = null;
 
-// تجهيز أوامر السلاش (تشغيل، إيقاف، استئناف، إنهاء، مستوى الصوت)
+// تجهيز أوامر السلاش (/)
 const commands = [
     new SlashCommandBuilder()
         .setName('شغل')
-        .setDescription('تشغيل أغنية بالاسم أو الرابط')
+        .setDescription('تشغيل أغنية بالاسم من يوتيوب')
         .addStringOption(option =>
-            option.setName('البحث')
-                .setDescription('اكتب اسم الأغنية أو الرابط')
+            option.setName('اسم')
+                .setDescription('اكتب اسم الأغنية')
                 .setRequired(true)),
     new SlashCommandBuilder()
         .setName('وقف')
@@ -39,20 +33,42 @@ const commands = [
         .setDescription('استئناف تشغيل الأغنية'),
     new SlashCommandBuilder()
         .setName('إيقاف')
-        .setDescription('إيقاف الأغنية نهائياً وإخراج البوت أو مسح القائمة'),
-    new SlashCommandBuilder()
-        .setName('صوت')
-        .setDescription('تغيير مستوى صوت البوت')
-        .addIntegerOption(option =>
-            option.setName('القيمة')
-                .setDescription('اختر مستوى الصوت من 1 إلى 100')
-                .setRequired(true))
+        .setDescription('إيقاف التشغيل نهائياً')
 ].map(command => command.toJSON());
+
+// دالة لتثبيت البوت وإبقائه داخل الروم الصوتي دائماً
+async function connectToVoiceChannel(guild) {
+    const channel = guild.channels.cache.get(VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) return;
+
+    try {
+        currentConnection = joinVoiceChannel({
+            channelId: channel.id,
+            guildId: guild.id,
+            adapterCreator: guild.voiceAdapterCreator,
+        });
+
+        currentConnection.subscribe(player);
+
+        currentConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+            try {
+                await entersState(currentConnection, VoiceConnectionStatus.Ready, 5_000);
+            } catch (error) {
+                currentConnection.destroy();
+                setTimeout(() => connectToVoiceChannel(guild), 2000);
+            }
+        });
+
+        console.log('تم تثبيت البوت في الروم الصوتي بنجاح!');
+    } catch (error) {
+        console.error('فشل في الاتصال بالروم الصوتي:', error);
+    }
+}
 
 client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
 
-    // تسجيل أوامر السلاش في ديسكورد تلقائياً
+    // تسجيل أوامر السلاش في ديسكورد
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(
@@ -64,104 +80,60 @@ client.on('ready', async () => {
         console.error(error);
     }
 
-    // دخول البوت تلقائياً للروم الصوتي أول ما يشتغل
-    try {
-        const guild = client.guilds.cache.first();
-        if (guild) {
-            const channel = guild.channels.cache.get(VOICE_CHANNEL_ID);
-            if (channel && channel.isVoiceBased()) {
-                const connection = joinVoiceChannel({
-                    channelId: channel.id,
-                    guildId: guild.id,
-                    adapterCreator: guild.voiceAdapterCreator,
-                });
-
-                await entersState(connection, VoiceConnectionStatus.Ready, 20 * 1000);
-                console.log(`تم دخول البوت إلى الروم الصوتي بنجاح!`);
-            }
-        }
-    } catch (error) {
-        console.error('فشل في الاتصال التلقائي بالروم الصوتي:', error);
+    const guild = client.guilds.cache.first();
+    if (guild) {
+        connectToVoiceChannel(guild);
     }
 });
 
-// التفاعل مع أوامر السلاش (/)
+// التعامل مع أوامر السلاش (/)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName } = interaction;
-    const voiceChannel = interaction.member?.voice.channel || interaction.guild?.channels.cache.get(VOICE_CHANNEL_ID);
+    const guild = interaction.guild;
+    if (!guild) return;
+
+    // التأكد من اتصال البوت بالروم الثابت
+    if (!currentConnection || currentConnection.state.status === VoiceConnectionStatus.Disconnected) {
+        await connectToVoiceChannel(guild);
+    }
 
     if (commandName === 'شغل') {
-        const query = interaction.options.getString('البحث');
-        if (!voiceChannel) {
-            return interaction.reply({ content: 'يا ليت تدخل روم صوتي أول!', ephemeral: true });
-        }
-
+        const query = interaction.options.getString('اسم');
         try {
-            await interaction.reply(`🔍 جاري البحث والتشغيل: **${query}**`);
-            await distube.play(voiceChannel, query, {
-                textChannel: interaction.channel,
-                member: interaction.member,
-            });
+            await interaction.reply(`🔍 جاري البحث والتشغيل في الروم الثابت: **${query}**`);
+            
+            const searchResults = await play.search(query, { limit: 1 });
+            if (!searchResults || searchResults.length === 0) {
+                return interaction.editReply('ما حصلت شي بهذا الاسم!');
+            }
+
+            const videoUrl = searchResults[0].url;
+            const stream = await play.stream(videoUrl);
+            const resource = createAudioResource(stream.stream, { inputType: stream.type });
+
+            player.play(resource);
+
         } catch (error) {
             console.error(error);
-            await interaction.editReply('صار فيه مشكلة في تشغيل الأغنية، تأكد من الاسم.');
+            await interaction.editReply('صار فيه مشكلة أثناء تشغيل الأغنية.');
         }
     } 
     
     else if (commandName === 'وقف') {
-        try {
-            const queue = distube.getQueue(interaction.guild.id);
-            if (!queue) return interaction.reply({ content: 'ما فيه شي شغال حالياً!', ephemeral: true });
-            queue.pause();
-            await interaction.reply('⏸️ تم إيقاف الأغنية مؤقتاً.');
-        } catch (error) {
-            console.error(error);
-            await interaction.reply({ content: 'حدث خطأ أثناء إيقاف الأغنية.', ephemeral: true });
-        }
+        player.pause();
+        await interaction.reply({ content: '⏸️ تم إيقاف الأغنية مؤقتاً.', ephemeral: true });
     } 
     
     else if (commandName === 'كمل') {
-        try {
-            const queue = distube.getQueue(interaction.guild.id);
-            if (!queue) return interaction.reply({ content: 'ما فيه شي متوقف حالياً!', ephemeral: true });
-            queue.resume();
-            await interaction.reply('▶️ تم استئناف تشغيل الأغنية.');
-        } catch (error) {
-            console.error(error);
-            await interaction.reply({ content: 'حدث خطأ أثناء استئناف الأغنية.', ephemeral: true });
-        }
+        player.unpause();
+        await interaction.reply({ content: '▶️ تم استئناف تشغيل الأغنية.', ephemeral: true });
     } 
     
     else if (commandName === 'إيقاف') {
-        try {
-            const queue = distube.getQueue(interaction.guild.id);
-            if (!queue) return interaction.reply({ content: 'ما فيه شي شغال أساساً!', ephemeral: true });
-            queue.stop();
-            await interaction.reply('⏹️ تم إيقاف الصوت.');
-        } catch (error) {
-            console.error(error);
-            await interaction.reply({ content: 'حدث خطأ أثناء الإيقاف.', ephemeral: true });
-        }
-    } 
-    
-    else if (commandName === 'صوت') {
-        const volume = interaction.options.getInteger('القيمة');
-        try {
-            const queue = distube.getQueue(interaction.guild.id);
-            if (!queue) return interaction.reply({ content: 'البوت مو قاعد يشغل شي حالياً عشان تغير صوته!', ephemeral: true });
-            
-            if (volume < 0 || volume > 100) {
-                return interaction.reply({ content: 'اختر قيمة الصوت بين 1 و 100 فقط!', ephemeral: true });
-            }
-
-            queue.setVolume(volume);
-            await interaction.reply(`🔊 تم ضبط مستوى الصوت على: **${volume}%**`);
-        } catch (error) {
-            console.error(error);
-            await interaction.reply({ content: 'حدث خطأ أثناء تغيير مستوى الصوت.', ephemeral: true });
-        }
+        player.stop();
+        await interaction.reply({ content: '⏹️ تم إيقاف الصوت نهائياً.', ephemeral: true });
     }
 });
 
