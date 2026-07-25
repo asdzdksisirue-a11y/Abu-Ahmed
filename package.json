@@ -1,15 +1,14 @@
 {
-  "name": "discord-music-bot",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Discord music bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^1.5.1",
-    "@discordjs/voice": "^0.16.0",
-    "discord.js": "^14.14.0",
-    "yt-search": "^2.11.0"
+    "@distube/ytdl-core": "latest",
+    "@discordjs/voice": "latest",
+    "discord.js": "latest",
+    "yt-search": "latest"
   }
 }
