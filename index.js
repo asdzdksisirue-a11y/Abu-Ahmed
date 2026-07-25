@@ -14,31 +14,30 @@ const client = new Client({
 
 const FIXED_VOICE_CHANNEL_ID = '1529174493753508062'; 
 
-// جلب الملفات المرفوعة وتصفيتها
-const files = fs.readdirSync(__dirname).filter(file => 
-    file.endsWith('.mp3') || file.endsWith('.wav') || 
-    file.includes('اخذ') || file.includes('جابك') || file.includes('نتغير')
-);
-
-const choices = files.map(file => ({ 
-    name: file.length > 100 ? file.substring(0, 97) + '...' : file, 
-    value: file 
-}));
-
-const commands = [
-    new SlashCommandBuilder()
-        .setName('play')
-        .setDescription('تشغيل الأغاني والملفات المرفوعة')
-        .addStringOption(option =>
-            option.setName('song')
-                .setDescription('اختر الأغنية أو الملف المطلوب')
-                .setRequired(true)
-                .addChoices(...(choices.length > 0 ? choices.slice(0, 25) : [{ name: 'لا توجد ملفات', value: 'none' }]))
-        )
-].map(command => command.toJSON());
-
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
+
+    // قراءة جميع الملفات الموجودة في المجلد عدا الملفات البرمجية الأساسية
+    const files = fs.readdirSync(__dirname).filter(file => 
+        !file.endsWith('.js') && !file.endsWith('.json') && !file.startsWith('.')
+    );
+
+    const choices = files.length > 0 
+        ? files.slice(0, 25).map(file => ({ name: file.substring(0, 100), value: file }))
+        : [{ name: 'لا توجد ملفات مرفوعة', value: 'none' }];
+
+    const commands = [
+        new SlashCommandBuilder()
+            .setName('play')
+            .setDescription('تشغيل الملفات المرفوعة في الروم الثابت')
+            .addStringOption(option =>
+                option.setName('song')
+                    .setDescription('اختر الملف المطلوب')
+                    .setRequired(true)
+                    .addChoices(...choices)
+            )
+    ].map(command => command.toJSON());
+
     try {
         const guild = client.guilds.cache.first();
         if (guild) {
@@ -62,7 +61,7 @@ client.once('ready', async () => {
             Routes.applicationCommands(client.user.id),
             { body: commands },
         );
-        console.log('تم تسجيل الأوامر بنجاح.');
+        console.log('تم تحديث وتسجيل الأوامر بنجاح.');
     } catch (error) {
         console.error(error);
     }
@@ -110,9 +109,9 @@ client.on('interactionCreate', async interaction => {
 
         } catch (error) {
             console.error('خطأ تشغيل الصوت:', error);
-            await interaction.reply({ content: 'صار خطأ تأكد إن الملف صوته حقيقي ومناسب للتشغيل.', ephemeral: true });
+            await interaction.reply({ content: 'صار خطأ، تأكد أن الملف مرفوع بصيغة صوت صحيحة (مثل MP3).', ephemeral: true });
         }
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISOURCE_TOKEN || process.env.DISCORD_TOKEN);
