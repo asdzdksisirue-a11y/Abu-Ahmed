@@ -12,29 +12,33 @@ const client = new Client({
     ]
 });
 
-// آي دي الروم الصوتي الثابت حقك
 const FIXED_VOICE_CHANNEL_ID = '1529174493753508062'; 
 
-// قراءة الملفات تلقائياً
-const files = fs.readdirSync(__dirname).filter(file => file.endsWith('.mp3') || file.endsWith('.wav') || file.includes('اخذ') || file.includes('جابك') || file.includes('نتغير'));
-const choices = (files.length > 0 ? files : ['index.js']).slice(0, 25).map(file => ({ name: file.substring(0, 100), value: file }));
+// جلب الملفات المرفوعة وتصفيتها
+const files = fs.readdirSync(__dirname).filter(file => 
+    file.endsWith('.mp3') || file.endsWith('.wav') || 
+    file.includes('اخذ') || file.includes('جابك') || file.includes('نتغير')
+);
+
+const choices = files.map(file => ({ 
+    name: file.length > 100 ? file.substring(0, 97) + '...' : file, 
+    value: file 
+}));
 
 const commands = [
     new SlashCommandBuilder()
         .setName('play')
-        .setDescription('تشغيل الملفات المرفوعة في الروم الثابت')
+        .setDescription('تشغيل الأغاني والملفات المرفوعة')
         .addStringOption(option =>
             option.setName('song')
-                .setDescription('اختر الملف المطلوب')
+                .setDescription('اختر الأغنية أو الملف المطلوب')
                 .setRequired(true)
-                .addChoices(...choices)
+                .addChoices(...(choices.length > 0 ? choices.slice(0, 25) : [{ name: 'لا توجد ملفات', value: 'none' }]))
         )
 ].map(command => command.toJSON());
 
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    
-    // أول ما يشتغل البوت، يدخل الروم الثابت تلقائياً
     try {
         const guild = client.guilds.cache.first();
         if (guild) {
@@ -49,7 +53,7 @@ client.once('ready', async () => {
             }
         }
     } catch (e) {
-        console.log('ما قدر يدخل الروم تلقائياً:', e);
+        console.log('خطأ في دخول الروم:', e);
     }
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -58,7 +62,7 @@ client.once('ready', async () => {
             Routes.applicationCommands(client.user.id),
             { body: commands },
         );
-        console.log('Successfully registered application commands.');
+        console.log('تم تسجيل الأوامر بنجاح.');
     } catch (error) {
         console.error(error);
     }
@@ -69,6 +73,11 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'play') {
         const songName = interaction.options.getString('song');
+        
+        if (songName === 'none') {
+            return interaction.reply({ content: 'ما فيه أي ملفات مرفوعة حالياً!', ephemeral: true });
+        }
+
         const guild = interaction.guild;
         const channel = guild.channels.cache.get(FIXED_VOICE_CHANNEL_ID);
 
@@ -79,7 +88,7 @@ client.on('interactionCreate', async interaction => {
         const filePath = path.join(__dirname, songName);
 
         if (!fs.existsSync(filePath)) {
-            return interaction.reply({ content: `ما لقيت الملف: **${songName}**`, ephemeral: true });
+            return interaction.reply({ content: `ما لقيت الملف بهذا الاسم: **${songName}**`, ephemeral: true });
         }
 
         try {
@@ -95,15 +104,13 @@ client.on('interactionCreate', async interaction => {
             connection.subscribe(player);
             player.play(resource);
 
-            await interaction.reply(`ابشر يا مجيد، جاري تشغيل: **${songName}** في رومك الثابت 🎵`);
+            await interaction.reply(`ابشر يا مجيد، جاري تشغيل: **${songName}** 🎵`);
 
-            player.on(AudioPlayerStatus.Idle, () => {
-                // البوت يبقى في الروم ولا يخرج منه
-            });
+            player.on(AudioPlayerStatus.Idle, () => {});
 
         } catch (error) {
-            console.error(error);
-            interaction.reply({ content: 'صار خطأ أثناء تشغيل الملف.', ephemeral: true });
+            console.error('خطأ تشغيل الصوت:', error);
+            await interaction.reply({ content: 'صار خطأ تأكد إن الملف صوته حقيقي ومناسب للتشغيل.', ephemeral: true });
         }
     }
 });
