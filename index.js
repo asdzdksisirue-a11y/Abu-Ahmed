@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
-const fs = require('fs');
-const path = require('path');
+const play = require('play-dl');
 
 const client = new Client({
     intents: [
@@ -17,27 +16,18 @@ const FIXED_VOICE_CHANNEL_ID = '1529174493753508062';
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
 
-    // قراءة جميع الملفات الموجودة في المجلد عدا الملفات البرمجية الأساسية
-    const files = fs.readdirSync(__dirname).filter(file => 
-        !file.endsWith('.js') && !file.endsWith('.json') && !file.startsWith('.')
-    );
-
-    const choices = files.length > 0 
-        ? files.slice(0, 25).map(file => ({ name: file.substring(0, 100), value: file }))
-        : [{ name: 'لا توجد ملفات مرفوعة', value: 'none' }];
-
     const commands = [
         new SlashCommandBuilder()
             .setName('play')
-            .setDescription('تشغيل الملفات المرفوعة في الروم الثابت')
+            .setDescription('تشغيل أغنية عبر الرابط مباشرة')
             .addStringOption(option =>
-                option.setName('song')
-                    .setDescription('اختر الملف المطلوب')
+                option.setName('url')
+                    .setDescription('حط رابط الأغنية (مثلاً من ساوندكلاود)')
                     .setRequired(true)
-                    .addChoices(...choices)
             )
     ].map(command => command.toJSON());
 
+    // دخول الروم الثابت تلقائياً أول ما يشتغل البوت
     try {
         const guild = client.guilds.cache.first();
         if (guild) {
@@ -71,11 +61,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'play') {
-        const songName = interaction.options.getString('song');
-        
-        if (songName === 'none') {
-            return interaction.reply({ content: 'ما فيه أي ملفات مرفوعة حالياً!', ephemeral: true });
-        }
+        const url = interaction.options.getString('url');
 
         const guild = interaction.guild;
         const channel = guild.channels.cache.get(FIXED_VOICE_CHANNEL_ID);
@@ -84,34 +70,37 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ content: 'ما قدرت ألقى الروم الثابت، تأكد من الآي دي!', ephemeral: true });
         }
 
-        const filePath = path.join(__dirname, songName);
-
-        if (!fs.existsSync(filePath)) {
-            return interaction.reply({ content: `ما لقيت الملف بهذا الاسم: **${songName}**`, ephemeral: true });
-        }
+        await interaction.deferReply();
 
         try {
+            // الاتصال بالروم الصوتي
             const connection = joinVoiceChannel({
                 channelId: channel.id,
                 guildId: guild.id,
                 adapterCreator: guild.voiceAdapterCreator,
             });
 
-            const player = createAudioPlayer();
-            const resource = createAudioResource(filePath);
+            // سحب الصوت من الرابط مباشرة باستخدام play-dl
+            const stream = await play.stream(url);
+            const resource = createAudioResource(stream.stream, {
+                inputType: stream.type
+            });
 
+            const player = createAudioPlayer();
             connection.subscribe(player);
             player.play(resource);
 
-            await interaction.reply(`ابشر يا مجيد، جاري تشغيل: **${songName}** 🎵`);
+            await interaction.editReply(`ابشر يا مجيد، جاري تشغيل الرابط الذي أرسلته 🎵`);
 
-            player.on(AudioPlayerStatus.Idle, () => {});
+            player.on(AudioPlayerStatus.Idle, () => {
+                // انتهت الأغنية
+            });
 
         } catch (error) {
-            console.error('خطأ تشغيل الصوت:', error);
-            await interaction.reply({ content: 'صار خطأ، تأكد أن الملف مرفوع بصيغة صوت صحيحة (مثل MP3).', ephemeral: true });
+            console.error('خطأ في سحب الصوت:', error);
+            await interaction.editReply('عذراً، صار خطأ في سحب الصوت من هذا الرابط. تأكد أن الرابط صحيح (يفضل استخدام روابط SoundCloud).');
         }
     }
 });
 
-client.login(process.env.DISOURCE_TOKEN || process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
